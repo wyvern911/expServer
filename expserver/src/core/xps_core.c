@@ -19,8 +19,10 @@ xps_core_t *xps_core_create() {
   core->loop = loop;
   vec_init(&(core->listeners));
   vec_init(&(core->connections));
+  vec_init(&(core->pipes));
   core->n_null_listeners = 0;
   core->n_null_connections = 0;
+  core->n_null_pipes = 0;
 
   logger(LOG_DEBUG, "xps_core_create()", "created core");
 
@@ -30,6 +32,23 @@ xps_core_t *xps_core_create() {
 void xps_core_destroy(xps_core_t *core) {
   assert(core != NULL);
 
+  // Destroy pipes and close active sources/sinks
+  for (int i = 0; i < core->pipes.length; i++) {
+    xps_pipe_t *pipe = core->pipes.data[i];
+    if (pipe != NULL) {
+      if (pipe->source != NULL && pipe->source->active) {
+          pipe->source->active = false;
+          if (pipe->source->close_cb) pipe->source->close_cb(pipe->source);
+      }
+      if (pipe->sink != NULL && pipe->sink->active) {
+          pipe->sink->active = false;
+          if (pipe->sink->close_cb) pipe->sink->close_cb(pipe->sink);
+      }
+      xps_pipe_destroy(pipe);
+    }
+  }
+  vec_deinit(&(core->pipes));
+
   // Destroy connections
   for (int i = 0; i < core->connections.length; i++) {
     xps_connection_t *connection = core->connections.data[i];
@@ -38,7 +57,7 @@ void xps_core_destroy(xps_core_t *core) {
   }
   vec_deinit(&(core->connections));
 
-  // Destory all the listeners and de-initialize core->listeners 
+  // Destroy all the listeners and de-initialize core->listeners 
   for (int i = 0; i < core->listeners.length; i++) {
     xps_listener_t *listener = core->listeners.data[i];
     if (listener != NULL)
@@ -46,7 +65,7 @@ void xps_core_destroy(xps_core_t *core) {
   }
   vec_deinit(&(core->listeners));
 
-  // Destory loop attached to core
+  // Destroy loop attached to core
   if (core->loop!=NULL) {
     xps_loop_destroy(core->loop);
   }
