@@ -103,7 +103,7 @@ void xps_listener_destroy(xps_listener_t *listener) {
 void listener_connection_handler(void* ptr) {
   assert(ptr != NULL);
 
-  xps_listener_t* listener=ptr;
+  xps_listener_t* listener = ptr;
   
   while (1) {
     struct sockaddr conn_addr;
@@ -112,7 +112,7 @@ void listener_connection_handler(void* ptr) {
     // Accepting connection
     int conn_sock_fd = accept(listener->sock_fd, (struct sockaddr *)&conn_addr, &conn_addr_len);
     if (conn_sock_fd < 0) {
-      if (errno==EAGAIN || errno==EWOULDBLOCK) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
         logger(LOG_DEBUG, "xps_listener_connection_handler()", "Kernel accept queue has been exhausted");
         break;
       }
@@ -122,7 +122,7 @@ void listener_connection_handler(void* ptr) {
     }
 
     // Make the connected socket NON_BLOCKING
-    if (make_socket_non_blocking(conn_sock_fd)!=OK) {
+    if (make_socket_non_blocking(conn_sock_fd) != OK) {
       logger(LOG_ERROR, "xps_listener_connection_handler()", "make_socket_non_blocking() failed");
       perror("Error message");
       return;
@@ -138,14 +138,38 @@ void listener_connection_handler(void* ptr) {
     
     client->listener = listener;
 
-    // Create a pipe and attach client's source and sink
-    xps_pipe_t *pipe = xps_pipe_create(listener->core, DEFAULT_PIPE_BUFF_THRESH, client->source, client->sink);
-    if (pipe == NULL) {
-      logger(LOG_ERROR, "xps_listener_connection_handler()", "xps_pipe_create() failed");
-      xps_connection_destroy(client);
-      continue;
+    // Handle connection based on listener port (upstream or direct)
+    if (listener->port == 8001) {
+      // Create upstream connection to 127.0.0.1:3000
+      xps_connection_t *upstream = xps_upstream_create(listener->core, "127.0.0.1", 3000);
+      if (upstream == NULL) {
+          logger(LOG_ERROR, "xps_listener_connection_handler()", "xps_upstream_create() failed");
+          xps_connection_destroy(client);
+          continue;
+      }
+
+      // Create pipe connection to client source and upstream sink
+      xps_pipe_t *pipe_c2u = xps_pipe_create(listener->core, DEFAULT_PIPE_BUFF_THRESH, client->source, upstream->sink);
+      
+      // Create pipe connection to upstream source and client sink
+      xps_pipe_t *pipe_u2c = xps_pipe_create(listener->core, DEFAULT_PIPE_BUFF_THRESH, upstream->source, client->sink);
+
+      if (pipe_c2u == NULL || pipe_u2c == NULL) {
+          logger(LOG_ERROR, "xps_listener_connection_handler()", "xps_pipe_create() failed for upstream");
+          xps_connection_destroy(client);
+          xps_connection_destroy(upstream);
+          continue;
+      }
+    } else {
+      // Same as previous stages (Echo server)
+      xps_pipe_t *pipe = xps_pipe_create(listener->core, DEFAULT_PIPE_BUFF_THRESH, client->source, client->sink);
+      if (pipe == NULL) {
+        logger(LOG_ERROR, "xps_listener_connection_handler()", "xps_pipe_create() failed");
+        xps_connection_destroy(client);
+        continue;
+      }
     }
     
     logger(LOG_INFO, "xps_listener_connection_handler()", "new connection");
-    }
+  }
 }
