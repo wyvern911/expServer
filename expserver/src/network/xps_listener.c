@@ -161,7 +161,6 @@ void listener_connection_handler(void* ptr) {
           continue;
       }
     } else {
-      // Same as previous stages (Echo server)
       xps_pipe_t *pipe = xps_pipe_create(listener->core, DEFAULT_PIPE_BUFF_THRESH, client->source, client->sink);
       if (pipe == NULL) {
         logger(LOG_ERROR, "xps_listener_connection_handler()", "xps_pipe_create() failed");

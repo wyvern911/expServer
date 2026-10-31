@@ -28,8 +28,7 @@ xps_connection_t *xps_upstream_create(xps_core_t *core, const char *host, u_int 
     // Free the addrinfo object after use
     freeaddrinfo(addr_info);
 
-    // Because the socket is non-blocking, connect() usually returns EINPROGRESS. 
-    // We treat 0 (success) or EINPROGRESS as valid connection states.
+    // Because the socket is non-blocking, connect() usually returns EINPROGRESS
     if (!(connect_error == 0 || errno == EINPROGRESS)) {
         logger(LOG_ERROR, "xps_upstream_create()", "connect() failed");
         perror("Error message");
