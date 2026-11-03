@@ -1,0 +1,7 @@
+Hello!
+How are you?
+Okay bye.
+
+Programming is easy.
+Hello World!
+Welcome to the world of programming.

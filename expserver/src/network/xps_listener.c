@@ -160,6 +160,27 @@ void listener_connection_handler(void* ptr) {
           xps_connection_destroy(upstream);
           continue;
       }
+
+    } else if (listener->port==8002)  {
+      int error;
+      xps_file_t *file = xps_file_create(listener->core, "../public/sample.txt", &error);
+      if (error==E_PERMISSION) {
+        xps_connection_destroy(client);
+        return;
+      }
+
+      xps_pipe_create(listener->core, DEFAULT_PIPE_BUFF_THRESH, file->source, client->sink);
+
+    } else if (listener->port==8003) {
+      int error;
+      xps_file_t * file = xps_file_create(listener->core, "../temp/file.txt", &error);
+      if (error==E_PERMISSION) {
+        xps_connection_destroy(client);
+        return;
+      }
+
+      xps_pipe_create(listener->core, DEFAULT_PIPE_BUFF_THRESH, file->source, client->sink);
+
     } else {
       xps_pipe_t *pipe = xps_pipe_create(listener->core, DEFAULT_PIPE_BUFF_THRESH, client->source, client->sink);
       if (pipe == NULL) {
