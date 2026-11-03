@@ -103,7 +103,7 @@ void xps_listener_destroy(xps_listener_t *listener) {
 void listener_connection_handler(void* ptr) {
   assert(ptr != NULL);
 
-  xps_listener_t* listener=ptr;
+  xps_listener_t* listener = ptr;
   
   while (1) {
     struct sockaddr conn_addr;
@@ -112,7 +112,7 @@ void listener_connection_handler(void* ptr) {
     // Accepting connection
     int conn_sock_fd = accept(listener->sock_fd, (struct sockaddr *)&conn_addr, &conn_addr_len);
     if (conn_sock_fd < 0) {
-      if (errno==EAGAIN || errno==EWOULDBLOCK) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
         logger(LOG_DEBUG, "xps_listener_connection_handler()", "Kernel accept queue has been exhausted");
         break;
       }
@@ -122,7 +122,7 @@ void listener_connection_handler(void* ptr) {
     }
 
     // Make the connected socket NON_BLOCKING
-    if (make_socket_non_blocking(conn_sock_fd)!=OK) {
+    if (make_socket_non_blocking(conn_sock_fd) != OK) {
       logger(LOG_ERROR, "xps_listener_connection_handler()", "make_socket_non_blocking() failed");
       perror("Error message");
       return;
@@ -131,12 +131,21 @@ void listener_connection_handler(void* ptr) {
     // Creating connection instance
     xps_connection_t *client = xps_connection_create(listener->core, conn_sock_fd);
     if (client == NULL) {
-      logger(LOG_ERROR, "xps_listener_connection_handler()", "xps_connection_create() failed");
+      logger(LOG_ERROR, "listener_connection_handler()", "xps_connection_create() failed");
       close(conn_sock_fd);
-      return;
+      continue;
     }
     
     client->listener = listener;
-    logger(LOG_INFO, "xps_listener_connection_handler()", "new connection");
+
+    // Delegate all standard routing directly to the new session module
+    xps_session_t *session = xps_session_create(listener->core, client);
+    if (session == NULL) {
+      logger(LOG_ERROR, "listener_connection_handler()", "xps_session_create() failed");
+      xps_connection_destroy(client);
+      continue;
     }
+    
+    logger(LOG_INFO, "listener_connection_handler()", "new connection");
+  }
 }

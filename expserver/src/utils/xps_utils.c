@@ -94,3 +94,12 @@ void vec_filter_null(vec_void_t *v) {
 
   vec_deinit(&temp);
 }
+
+// To get the file extension of MIMEs
+const char *get_file_ext(const char *file_path) {
+  // Find the last occurrence of dot
+  const char *dot = strrchr(file_path, '.');
+
+  // Check if dot is present and it is not the first character
+  return dot && dot > strrchr(file_path, '/') ? dot : NULL;
+}
