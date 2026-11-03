@@ -27,7 +27,7 @@ void loop_event_destroy(loop_event_t *event) {
   logger(LOG_DEBUG, "event_destroy()", "destroyed event");
 }
 
-// --- Pipe Handlers & Garbage Collection ---
+// --- Pipe Handlers ---
 
 bool handle_pipes(xps_loop_t *loop) {
     assert(loop != NULL);
@@ -106,6 +106,10 @@ void filter_nulls(xps_core_t *core) {
     if (core->n_null_pipes > DEFAULT_NULLS_THRESH) {
         vec_filter_null(&core->pipes);
         core->n_null_pipes = 0;
+    }
+    if (core->n_null_sessions > DEFAULT_NULLS_THRESH) {
+        vec_filter_null(&core->sessions);
+        core->n_null_sessions = 0;
     }
 }
 

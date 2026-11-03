@@ -20,9 +20,11 @@ xps_core_t *xps_core_create() {
   vec_init(&(core->listeners));
   vec_init(&(core->connections));
   vec_init(&(core->pipes));
+  vec_init(&(core->sessions));
   core->n_null_listeners = 0;
   core->n_null_connections = 0;
   core->n_null_pipes = 0;
+  core->n_null_sessions = 0;
 
   logger(LOG_DEBUG, "xps_core_create()", "created core");
 
@@ -64,6 +66,14 @@ void xps_core_destroy(xps_core_t *core) {
       xps_listener_destroy(listener); 
   }
   vec_deinit(&(core->listeners));
+
+  // Destroy all the sessions
+  for (int i = 0; i < core->sessions.length; i++) {
+    xps_session_t *session = core->sessions.data[i];
+    if (session != NULL)
+      xps_session_destroy(session); 
+  }
+  vec_deinit(&(core->sessions));
 
   // Destroy loop attached to core
   if (core->loop!=NULL) {
