@@ -152,7 +152,7 @@ xps_buffer_t *xps_http_req_serialize(xps_http_req_t *http_req) {
     size_t req_line_len = strlen(http_req->request_line);
     size_t final_len = req_line_len + 1 + headers_str->len + 1 + 1;
 
-    xps_buffer_t *buff = xps_buffer_create(0, final_len, NULL);
+    xps_buffer_t *buff = xps_buffer_create(final_len, 0, NULL);
     if (buff == NULL) {
         xps_buffer_destroy(headers_str);
         return NULL;
@@ -205,6 +205,12 @@ xps_http_req_t *xps_http_req_create(xps_core_t *core, xps_buffer_t *buff, int *e
     if (ret != OK) {
         xps_http_req_destroy(core, http_req);
         *error = ret;
+        return NULL;
+    }
+
+    if (xps_http_get_header(&http_req->headers, "Host") == NULL) {
+        xps_http_req_destroy(core, http_req);
+        *error = E_FAIL;
         return NULL;
     }
 

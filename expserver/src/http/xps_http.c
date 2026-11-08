@@ -43,18 +43,15 @@ int xps_http_parse_request_line(xps_http_req_t *http_req, xps_buffer_t *buff) {
                     http_req->method_end = p_ch;
                     size_t method_len = p_ch - http_req->method_start;
                     
-                    // Match the method
                     if (method_len == 3 && http_strcmp(http_req->method_start, "GET", 3)) http_req->method_n = HTTP_GET;
                     else if (method_len == 4 && http_strcmp(http_req->method_start, "POST", 4)) http_req->method_n = HTTP_POST;
                     else if (method_len == 3 && http_strcmp(http_req->method_start, "PUT", 3)) http_req->method_n = HTTP_PUT;
                     else if (method_len == 4 && http_strcmp(http_req->method_start, "HEAD", 4)) http_req->method_n = HTTP_HEAD;
                     else if (method_len == 6 && http_strcmp(http_req->method_start, "DELETE", 6)) http_req->method_n = HTTP_DELETE;
-                    // Note: Expand with OPTIONS, TRACE, CONNECT if needed
+                    else return E_FAIL; // <-- ADD THIS LINE to reject bad methods
                     
                     parser_state = RL_SP_AFTER_METHOD;
-                } else if (ch < 'A' || ch > 'Z') {
-                    return E_FAIL;
-                }
+                } else if (ch < 'A' || ch > 'Z') return E_FAIL;
                 break;
 
             case RL_SP_AFTER_METHOD:
@@ -381,7 +378,7 @@ xps_buffer_t *xps_http_serialize_headers(vec_void_t *headers) {
     assert(headers != NULL);
     
     size_t initial_size = DEFAULT_BUFFER_SIZE;
-    xps_buffer_t *buff = xps_buffer_create(0, initial_size, NULL);
+    xps_buffer_t *buff = xps_buffer_create(initial_size, 0, NULL);
     if (!buff) return NULL;
     
     // Initialize first byte to null terminator for strcat
