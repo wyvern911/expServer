@@ -13,5 +13,6 @@ char *get_remote_ip(u_int sock_fd);
 // Other functions
 void vec_filter_null(vec_void_t *v);
 const char *get_file_ext(const char *file_path);
+char *str_from_ptrs(const char *start, const char *end);
 
 #endif

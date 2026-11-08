@@ -1,6 +1,7 @@
 #include "xps_session.h"
 
 // Forward declarations of handler functions
+void session_process_request(xps_session_t *session);
 void client_source_handler(void *ptr);
 void client_source_close_handler(void *ptr);
 void client_sink_handler(void *ptr);
@@ -50,6 +51,8 @@ xps_session_t *xps_session_create(xps_core_t *core, xps_connection_t *client) {
   session->core = core;
   session->client = client;
   session->upstream = NULL;
+
+  session->http_req = NULL;
   
   session->upstream_connected = false;
   session->upstream_error_res_set = false;
@@ -80,33 +83,78 @@ xps_session_t *xps_session_create(xps_core_t *core, xps_connection_t *client) {
 
   logger(LOG_DEBUG, "xps_session_create()", "created session");
 
-  // If listener port is 8001, create an upstream module and then creates a pipe 
-  // between session->upstream_source and upstream->sink as well as between upstream->source and session->upstream_sink
-  if (client->listener->port == 8001) {
-    xps_connection_t *upstream = xps_upstream_create(core, "127.0.0.1", 3000);
-    if (upstream == NULL) {
-      logger(LOG_ERROR, "xps_session_create()", "xps_upstream_create() failed");
-      xps_session_destroy(session);
-      return NULL;
-    }
-    session->upstream = upstream;
-    xps_pipe_create(core, DEFAULT_PIPE_BUFF_THRESH, session->upstream_source, upstream->sink);
-    xps_pipe_create(core, DEFAULT_PIPE_BUFF_THRESH, upstream->source, session->upstream_sink);
-  }
-  // If listener port is 8002, create a file module and then creates a pipe between file->source and session->file_sink
-  else if (client->listener->port == 8002) {
-    int error;
-    xps_file_t *file = xps_file_create(core, "../public/sample.txt", &error);
-    if (file == NULL) {
-      logger(LOG_ERROR, "xps_session_create()", "xps_file_create() failed");
-      xps_session_destroy(session);
-      return NULL;
-    }
-    session->file = file;
-    xps_pipe_create(core, DEFAULT_PIPE_BUFF_THRESH, file->source, session->file_sink);
-  }
-  
   return session;
+}
+
+// To process http request
+void session_process_request(xps_session_t *session) {
+  assert(session != NULL);
+  
+  char reply[DEFAULT_BUFFER_SIZE];
+
+  // 1. BAD REQUEST (HTTP 400) if parser failed or path is missing
+  if (session->http_req == NULL || session->http_req->path == NULL) {
+    sprintf(reply, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
+    xps_buffer_t *buff = xps_buffer_create(strlen(reply), strlen(reply), reply);
+    set_to_client_buff(session, buff);
+    return;
+  }
+
+  // 2. Map requested path to local file system
+  if (session->http_req->path) {
+    char file_path[DEFAULT_BUFFER_SIZE];
+    strcpy(file_path, "../public");
+    
+    // Safety fallback: if they just request "http://localhost:8001/", serve index.html
+    if (strcmp(session->http_req->path, "/") == 0) {
+      strcat(file_path, "/index.html");
+    } else {
+      strcat(file_path, session->http_req->path);
+    }
+
+    int error;
+    session->file = xps_file_create(session->core, file_path, &error);
+    
+    // 3. Handle File Creation Errors (404, 403)
+    if (session->file == NULL) {
+      if (error == 2) { // E_NOTFOUND / ENOENT
+        sprintf(reply, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+      } else if (error == 13) { // E_PERMISSION / EACCES
+        sprintf(reply, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
+      } else {
+        sprintf(reply, "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
+      }
+      
+      xps_buffer_t *buff = xps_buffer_create(strlen(reply), strlen(reply), reply);
+      set_to_client_buff(session, buff);
+      return;
+    }
+
+    // 4. File Found! Format HTTP 200 OK headers
+    if (session->file->mime_type) {
+      sprintf(reply,
+              "HTTP/1.1 200 OK\r\n"
+              "Server: eXpServer\r\n"
+              "Access-Control-Allow-Origin: *\r\n"
+              "Content-Length: %zu\r\n"
+              "Content-Type: %s\r\n\r\n",
+              session->file->size, session->file->mime_type);
+    } else {
+      // Fallback if MIME type isn't identified
+      sprintf(reply,
+              "HTTP/1.1 200 OK\r\n"
+              "Server: eXpServer\r\n"
+              "Content-Length: %zu\r\n\r\n",
+              session->file->size);
+    }
+
+    // Send HTTP Headers to client
+    xps_buffer_t *buff = xps_buffer_create(strlen(reply), strlen(reply), reply);
+    set_to_client_buff(session, buff);
+    
+    // Route the actual file contents to the client
+    xps_pipe_create(session->core, DEFAULT_PIPE_BUFF_THRESH, session->file->source, session->file_sink);
+  }
 }
 
 // Used while writing data from session instance to client connection instance
@@ -150,9 +198,48 @@ void client_sink_handler(void *ptr) {
     return;
   }
 
-  // The read data from pipe is then stored into session->from_client_buff.
-  set_from_client_buff(session, buff);
-  xps_pipe_sink_clear(sink, buff->len);
+  // Intercept data and parse it as HTTP
+  if (session->http_req == NULL) { // HTTP request hasn't been parsed yet
+    int error;
+    
+    // Try to create and parse the HTTP request from the buffer
+    xps_http_req_t *http_req = xps_http_req_create(session->core, buff, &error);
+    
+    if (error == E_FAIL) {
+      // Parsing failed (bad syntax). Process to trigger 400 Bad Request.
+      session_process_request(session);
+      xps_buffer_destroy(buff);
+      xps_pipe_sink_clear(sink, buff->len);
+      return;
+    }
+    
+    if (error == E_AGAIN) {
+      // Need more data (e.g., partial header received). 
+      // Do not clear pipe, let data accumulate and try again on next Epoll event.
+      xps_buffer_destroy(buff);
+      return;
+    }
+
+    // Parsing Successful
+    session->http_req = http_req;
+    
+    // Serialize http_req into a clean buffer (used for downstream proxy features later)
+    xps_buffer_t *http_req_buff = xps_http_req_serialize(http_req);
+    
+    // Send serialized HTTP buffer toward the proxy route
+    set_from_client_buff(session, http_req_buff);
+    
+    xps_pipe_sink_clear(sink, buff->len);
+    xps_buffer_destroy(buff);
+
+    // Formulate HTTP response and serve file
+    session_process_request(session);
+  } else {
+    // If the HTTP head is already parsed (e.g., this is just body data like a file upload),
+    // act like a normal proxy and pass it straight through.
+    set_from_client_buff(session, buff);
+    xps_pipe_sink_clear(sink, buff->len);
+  }
 }
 
 void client_sink_close_handler(void *ptr) {
@@ -346,6 +433,11 @@ void xps_session_destroy(xps_session_t *session) {
   if (session->from_client_buff != NULL)
     xps_buffer_destroy(session->from_client_buff);
 
+  // Free the parsed HTTP request memory
+  if (session->http_req != NULL) {
+    xps_http_req_destroy(session->core, session->http_req);
+  }
+  
   // Set the entry for session in core->sessions as NULL.
   for (int i = 0; i < session->core->sessions.length; i++) {
     if (session->core->sessions.data[i] == session) {
