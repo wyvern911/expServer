@@ -418,3 +418,32 @@ xps_buffer_t *xps_http_serialize_headers(vec_void_t *headers) {
     
     return buff;
 }
+
+int xps_http_set_header(vec_void_t *headers, const char *key, const char *val) {
+    if (headers == NULL || key == NULL || val == NULL) {
+        return E_FAIL;
+    }
+
+    xps_keyval_t *header = malloc(sizeof(xps_keyval_t));
+    if (header == NULL) {
+        logger(LOG_ERROR, "xps_http_set_header()", "malloc() failed for 'header'");
+        return E_FAIL;
+    }
+
+    header->key = malloc(strlen(key) + 1);
+    header->val = malloc(strlen(val) + 1);
+
+    if (header->key == NULL || header->val == NULL) {
+        if (header->key) free(header->key);
+        if (header->val) free(header->val);
+        free(header);
+        logger(LOG_ERROR, "xps_http_set_header()", "malloc() failed for 'header->key' or 'header->val'");
+        return E_FAIL;
+    }
+
+    strcpy(header->key, key);
+    strcpy(header->val, val);
+
+    vec_push(headers, header);
+    return OK;
+}
