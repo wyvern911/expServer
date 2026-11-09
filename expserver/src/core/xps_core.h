@@ -13,9 +13,10 @@ struct xps_core_s {
   u_int n_null_connections;
   u_int n_null_pipes;
   u_int n_null_sessions;
+  xps_config_t *config;
 };
 
-xps_core_t *xps_core_create();
+xps_core_t *xps_core_create(xps_config_t *config);
 void xps_core_destroy(xps_core_t *core);
 void xps_core_start(xps_core_t *core);
 

@@ -1,4 +1,4 @@
-#include "../xps.h"
+#include "xps_mime.h"
 //here, some extension-mime types pairs are given, you can add as required
 xps_keyval_t mime_types[] = {
     {".h", "text/x-c"},
@@ -13,7 +13,9 @@ xps_keyval_t mime_types[] = {
     {".txt", "text/plain"},
     {".png", "image/png"},
     {".png", "image/x-png"},
-    };
+    {".jpg", "image/jpeg"},
+    {".pdf", "application/pdf"},
+};
 int n_mimes = sizeof(mime_types) / sizeof(mime_types[0]);
 
 const char *xps_get_mime(const char *file_path) {

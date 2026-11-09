@@ -1,7 +1,7 @@
 #ifndef XPS_HTTP_REQ_H
 #define XPS_HTTP_REQ_H
 
-#include "../xps.h"
+#include "xps_http.h"
 
 struct xps_http_req_s {
   xps_http_parser_state_t parser_state;
