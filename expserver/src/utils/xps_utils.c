@@ -75,6 +75,7 @@ char *get_remote_ip(u_int sock_fd) {
     return ip_str;
 }
 
+// Other functions
 void vec_filter_null(vec_void_t *v) {
   assert(v != NULL);
 
@@ -94,6 +95,7 @@ void vec_filter_null(vec_void_t *v) {
   vec_deinit(&temp);
 }
 
+// To get the file extension of MIMEs
 const char *get_file_ext(const char *file_path) {
   // Find the last occurrence of dot
   const char *dot = strrchr(file_path, '.');
@@ -102,6 +104,7 @@ const char *get_file_ext(const char *file_path) {
   return dot && dot > strrchr(file_path, '/') ? dot : NULL;
 }
 
+// To get the string inbetween two pointers
 char *str_from_ptrs(const char *start, const char *end) {
   assert(start != NULL);
   assert(end != NULL);
@@ -119,77 +122,4 @@ char *str_from_ptrs(const char *start, const char *end) {
   str[len] = '\0';
 
   return str;
-}
-
-
-bool str_starts_with(const char *str, const char *prefix) {
-	assert(str != NULL);
-	assert(prefix != NULL);
-
-	size_t prefix_len = strlen(prefix);
-	size_t str_len = strlen(str);
-
-	if (str_len < prefix_len)
-		return false;
-
-	if (strncmp(str, prefix, prefix_len) != 0)
-		return false;
-
-	// checking boundary condition eg /api2 and /api (these should not match)
-	// BUT if prefix ends with '/', it's already a clear boundary
-	if (prefix_len > 0 && prefix[prefix_len - 1] == '/') {
-		return true;
-	}
-
-	char next = str[prefix_len];
-	return (next == '\0' || next == '/');
-}
-
-char *path_join(const char *path_1, const char *path_2) {
-	assert(path_1 != NULL);
-	assert(path_2 != NULL);
-
-	size_t joined_path_size = strlen(path_1) + strlen(path_2) + 4;
-	char *joined_path = malloc(joined_path_size);
-	snprintf(joined_path, joined_path_size, "%s/%s", path_1, path_2);
-
-	return joined_path;
-}
-
-char *str_create(const char *str) {
-	assert(str != NULL);
-
-	char *new_str = malloc(strlen(str) + 1);
-	if (new_str == NULL) {
-		logger(LOG_ERROR, "str_create()", "malloc() failed for 'new_str'");
-		return NULL;
-	}
-	strcpy(new_str, str);
-
-	return new_str;
-}
-
-bool is_dir(const char *path) {
-	assert(path != NULL);
-
-	struct stat path_stat;
-	if (stat(path, &path_stat) != 0)
-		return false;
-
-	return S_ISDIR(path_stat.st_mode);
-}
-
-bool is_file(const char *path) {
-	assert(path != NULL);
-
-	struct stat path_stat;
-	if (stat(path, &path_stat) != 0)
-		return false;
-
-	return S_ISREG(path_stat.st_mode);
-}
-
-bool is_abs_path(const char *path) {
-	assert(path != NULL);
-	return path[0] == '/';
 }

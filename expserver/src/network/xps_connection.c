@@ -1,39 +1,43 @@
-#include "../xps.h"
+#include "xps_connection.h"
 
-void connection_loop_read_handler(void *ptr);
-void connection_loop_write_handler(void *ptr);
-void connection_loop_close_handler(void *ptr);
 void connection_source_handler(void *ptr);
 void connection_source_close_handler(void *ptr);
 void connection_sink_handler(void *ptr);
 void connection_sink_close_handler(void *ptr);
+
+void connection_loop_read_handler(void *ptr);
+void connection_loop_write_handler(void *ptr);
+void connection_loop_close_handler(void *ptr);
+
 void connection_close(xps_connection_t *connection, bool peer_closed);
 
 xps_connection_t *xps_connection_create(xps_core_t *core, u_int sock_fd) {
+    // validate params
+    assert(core != NULL);
 
+    // Create & allocate memory for a connection instance
     xps_connection_t *connection = malloc(sizeof(xps_connection_t));
     if (connection == NULL) {
         logger(LOG_ERROR, "xps_connection_create()", "malloc() failed for 'connection'");
         return NULL;
     }
 
+    // Create source instance
     xps_pipe_source_t *source = xps_pipe_source_create(connection, connection_source_handler, connection_source_close_handler);
-    if(source == NULL) {
+    if (source == NULL) {
         logger(LOG_ERROR, "xps_connection_create()", "xps_pipe_source_create() failed");
         free(connection);
         return NULL;
     }
 
+    // Create sink instance
     xps_pipe_sink_t *sink = xps_pipe_sink_create(connection, connection_sink_handler, connection_sink_close_handler);
-    if(sink == NULL) {
+    if (sink == NULL) {
         logger(LOG_ERROR, "xps_connection_create()", "xps_pipe_sink_create() failed");
         xps_pipe_source_destroy(source);
         free(connection);
         return NULL;
     }
-
-    /* attach sock_fd to epoll */
-    xps_loop_attach(core->loop, sock_fd, EPOLLIN | EPOLLOUT | EPOLLET, connection, connection_loop_read_handler, connection_loop_write_handler, connection_loop_close_handler);
 
     // Init values
     connection->core = core;
@@ -43,206 +47,208 @@ xps_connection_t *xps_connection_create(xps_core_t *core, u_int sock_fd) {
     connection->source = source;
     connection->sink = sink;
 
-    /* add connection to 'connections' list */
-    vec_push(&core->connections, connection);
+    // attach sock_fd to epoll
+    if (xps_loop_attach(core->loop, sock_fd, EPOLLIN | EPOLLOUT | EPOLLET, connection, 
+                        connection_loop_read_handler, connection_loop_write_handler, connection_loop_close_handler) != OK) {
+        logger(LOG_ERROR, "xps_connection_create()", "xps_loop_attach() failed");
+        xps_pipe_source_destroy(source);
+        xps_pipe_sink_destroy(sink);
+        if (connection->remote_ip != NULL) free(connection->remote_ip);
+        free(connection);
+        return NULL;
+    }
 
+    // add connection to 'connections' list
+    vec_push(&core->connections, connection);
+    
     logger(LOG_DEBUG, "xps_connection_create()", "created connection");
     return connection;
 }
 
 void xps_connection_destroy(xps_connection_t *connection) {
-
-    /* validate params */
+    // validate params
     assert(connection != NULL);
 
-    /* set connection to NULL in 'connections' list */
-    xps_core_t *core = connection->core;
-    for(int i = 0; i < core->connections.length; i++) {
-        xps_connection_t *curr = core->connections.data[i];
-        if (curr == connection) {
-            core->connections.data[i] = NULL;
+    // detach connection from loop
+    xps_loop_detach(connection->core->loop, connection->sock_fd);
+
+    // set connection to NULL in 'connections' list
+    for (int i = 0; i < connection->core->connections.length; i++) {
+        if (connection->core->connections.data[i] == connection) {
+            connection->core->connections.data[i] = NULL;
+            connection->core->n_null_connections++;
             break;
         }
     }
 
-    /* detach connection from loop */
-    xps_loop_detach(connection->core->loop, connection->sock_fd);
-
     // destroy source and sink
-    if (connection->source != NULL) {
-        xps_pipe_source_destroy(connection->source);
-    }
-    if (connection->sink != NULL) {
-        xps_pipe_sink_destroy(connection->sink);
-    }
+    if (connection->source != NULL) xps_pipe_source_destroy(connection->source);
+    if (connection->sink != NULL) xps_pipe_sink_destroy(connection->sink);
 
-    /* close connection socket FD */
+    // close connection socket FD
     close(connection->sock_fd);
 
-    /* free connection->remote_ip */
-    free(connection->remote_ip);
+    // free connection->remote_ip
+    if (connection->remote_ip != NULL) {
+        free(connection->remote_ip);
+    }
 
-    /* free connection instance */
+    // free connection instance
     free(connection);
-
+    
     logger(LOG_DEBUG, "xps_connection_destroy()", "destroyed connection");
 }
 
-void connection_loop_close_handler(void *ptr) {
-    xps_connection_t *connection = (xps_connection_t *)ptr;
-    assert(connection != NULL);
-
-    logger(LOG_INFO, "connection_loop_close_handler()", "connection closed");
-    connection_close(connection, true);
-}
-
-void connection_loop_read_handler(void* ptr) {
-    assert(ptr != NULL);
-    xps_connection_t *connection = (xps_connection_t *)ptr;
-    connection->source->ready = true;
-}
-
-void connection_loop_write_handler(void* ptr) {
-    assert(ptr != NULL);
-    xps_connection_t *connection = (xps_connection_t *)ptr;
-    connection->sink->ready = true;
-}
-
 void connection_source_handler(void *ptr) {
-    /*assert ptr not null*/
+    // validate params
     assert(ptr != NULL);
-    xps_pipe_source_t *source = (xps_pipe_source_t *) ptr;
+    xps_pipe_source_t *source = ptr;
     xps_connection_t *connection = source->ptr;
 
-    xps_buffer_t *buff = xps_buffer_create(DEFAULT_BUFFER_SIZE, 0, NULL);
+    // Create a buffer instance. Pass NULL so xps_buffer allocates its own memory
+    xps_buffer_t *buff = xps_buffer_create(DEFAULT_BUFFER_SIZE, DEFAULT_BUFFER_SIZE, NULL);
     if (buff == NULL) {
-        logger(LOG_DEBUG, "connection_source_handler()", "xps_buffer_create() failed");
+        logger(LOG_ERROR, "connection_source_handler()", "xps_buffer_create() failed");
         return;
     }
 
-    /*Read from socket using recv()*/
-    int read_n = recv(connection->sock_fd, buff->data, buff->size, 0);
-    buff->len = read_n;
+    // update the recv() function parameter to limit the data read up to pipe threshold limit
+    size_t available = source->pipe->buff_thresh - source->pipe->buff_list->len;
+    size_t read_limit = (DEFAULT_BUFFER_SIZE < available) ? DEFAULT_BUFFER_SIZE : available;
 
-    // Socket would block
+    // read data from client using recv()
+    long read_n = recv(connection->sock_fd, buff->data, read_limit, 0);
+    buff->len = (read_n > 0) ? read_n : 0;
+
     if (read_n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        // There is nothing to read, ie, receive buffer is empty. So make source ready false
         xps_buffer_destroy(buff);
         source->ready = false;
         return;
     }
 
-    // Socket error
     if (read_n < 0) {
-        /*destroy buff*/
+        // Some crash has occured
         xps_buffer_destroy(buff);
         logger(LOG_ERROR, "connection_source_handler()", "recv() failed");
         connection_close(connection, false);
         return;
     }
 
-    // Peer closed connection
     if (read_n == 0) {
-        /*destroy buff*/
+        // Peer closed connection
         xps_buffer_destroy(buff);
-        /*close connection*/
-        connection_close(connection, false);
+        connection_close(connection, true);
         return;
     }
 
+    // write buffer to pipe
     if (xps_pipe_source_write(source, buff) != OK) {
         logger(LOG_ERROR, "connection_source_handler()", "xps_pipe_source_write() failed");
-        /*destroy buff*/
         xps_buffer_destroy(buff);
-        /*close connection*/
         connection_close(connection, false);
         return;
     }
 
+    // Destroy the temp buffer instance
     xps_buffer_destroy(buff);
 }
 
 void connection_source_close_handler(void *ptr) {
+    // validate params
     assert(ptr != NULL);
-
     xps_pipe_source_t *source = ptr;
-
-    logger(LOG_DEBUG, "connection_source_close_handler()",
-           "source=%p pipe=%p sink=%p",
-           (void *)source,
-           (void *)source->pipe,
-           source->pipe ? (void *)source->pipe->sink : NULL);
-
     xps_connection_t *connection = source->ptr;
 
-    if (!source->active &&
-        (source->pipe == NULL ||
-         source->pipe->sink == NULL ||
-         !source->pipe->sink->active)) {
-
-        logger(LOG_DEBUG, "connection_source_close_handler()",
-               "closing connection");
-
+    // if both the source and sink not active, close the connection
+    if (!connection->source->active && !connection->sink->active) {
         connection_close(connection, false);
     }
 }
 
 void connection_sink_handler(void *ptr) {
-    /*assert*/
+    // validate params
     assert(ptr != NULL);
-    xps_pipe_sink_t *sink = (xps_pipe_sink_t *) ptr;
+    xps_pipe_sink_t *sink = ptr;
     xps_connection_t *connection = sink->ptr;
-    ssize_t len = sink->pipe->buff_list->len;
 
-    xps_buffer_t *buff = xps_pipe_sink_read(sink, len);
+    // chunk limit check
+    size_t read_len = sink->pipe->buff_list->len;
+    if (read_len > DEFAULT_BUFFER_SIZE) {
+        read_len = DEFAULT_BUFFER_SIZE;
+    }
+
+    // read from the pipe
+    xps_buffer_t *buff = xps_pipe_sink_read(sink, read_len);
     if (buff == NULL) {
         logger(LOG_ERROR, "connection_sink_handler()", "xps_pipe_sink_read() failed");
         return;
     }
 
-    // Write to socket
-    int write_n = send(connection->sock_fd, buff->data, buff->len, MSG_NOSIGNAL);
-
-    /*destroy buff*/
+    // Send to the client
+    long write_n = send(connection->sock_fd, buff->data, buff->len, MSG_NOSIGNAL);
+    
+    // Destroy the temp buffer instance
     xps_buffer_destroy(buff);
 
-    // Socket would block
     if (write_n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-        /*sink made not ready*/
+        // Since kernel buffer is full, socket is not ready to write, so make sink ready false
         sink->ready = false;
         return;
     }
 
-    // Socket error
     if (write_n < 0) {
-    logger(LOG_ERROR, "connection_sink_handler()", "send() failed");
-        /*close connection*/
+        // Some crash occured
+        logger(LOG_ERROR, "connection_sink_handler()", "send() failed");
         connection_close(connection, false);
         return;
     }
 
+    // EARLY RETURN
     if (write_n == 0) return;
 
-    if (xps_pipe_sink_clear(sink, write_n) != OK) logger(LOG_ERROR, "connection_sink_handler()", "failed to clear %d bytes from sink", write_n);
+    // Clear the amount of data sent from the pipe buffer
+    if (xps_pipe_sink_clear(sink, write_n) != OK) {
+        logger(LOG_ERROR, "connection_sink_handler()", "failed to clear sink");
+    }
 }
 
 void connection_sink_close_handler(void *ptr) {
-    /* assert */
+    // validate params
     assert(ptr != NULL);
-
-    xps_pipe_sink_t *sink = (xps_pipe_sink_t *)ptr;
+    xps_pipe_sink_t *sink = ptr;
     xps_connection_t *connection = sink->ptr;
 
-    // The connection can be closed only when both the sink and source are inactive.
-    // The source may be NULL when there is no upstream connection.
-    if (!sink->active && (sink->pipe->source == NULL || !sink->pipe->source->active)) {
+    // if both the source and sink not active, close the connection
+    if (!connection->source->active && !connection->sink->active) {
         connection_close(connection, false);
     }
 }
 
+void connection_loop_read_handler(void *ptr) {
+    assert(ptr != NULL);
+    xps_connection_t *connection = ptr;
+    // indicate the source is ready to receive data and write to pipe
+    connection->source->ready = true;
+}
+
+void connection_loop_write_handler(void *ptr) {
+    assert(ptr != NULL);
+    xps_connection_t *connection = ptr;
+    // indicate the sink is ready to read data from pipe and send
+    connection->sink->ready = true;
+}
+
+void connection_loop_close_handler(void *ptr) {
+    // Destroy the connection instance
+    assert(ptr != NULL);
+    xps_connection_t *connection = ptr;
+    connection_close(connection, true);
+}
+
 void connection_close(xps_connection_t *connection, bool peer_closed) {
-    /*assert*/
     assert(connection != NULL);
     logger(LOG_INFO, "connection_close()", peer_closed ? "peer closed connection" : "closing connection");
-    /*destroy connection*/
+    // destroy connection
     xps_connection_destroy(connection);
 }
