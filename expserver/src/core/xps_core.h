@@ -5,6 +5,7 @@
 
 struct xps_core_s {
   xps_loop_t *loop;
+  xps_config_t *config;
   vec_void_t listeners;
   vec_void_t connections;
   vec_void_t pipes;
@@ -15,7 +16,7 @@ struct xps_core_s {
   u_int n_null_sessions;
 };
 
-xps_core_t *xps_core_create();
+xps_core_t *xps_core_create(xps_config_t *config);
 void xps_core_destroy(xps_core_t *core);
 void xps_core_start(xps_core_t *core);
 
