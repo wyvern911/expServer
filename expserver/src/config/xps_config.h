@@ -30,6 +30,9 @@ struct xps_config_route_s {
   vec_void_t upstreams;
   u_int http_status_code;
   const char *redirect_url;
+
+  vec_void_t ip_whitelist;
+  vec_void_t ip_blacklist;
 };
 
 typedef enum xps_req_type_e {

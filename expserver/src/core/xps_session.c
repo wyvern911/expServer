@@ -119,6 +119,46 @@ void session_process_request(xps_session_t *session) {
         return;
     }
 
+    // 1. Check Whitelist
+    if (lookup->ip_whitelist.length > 0) {
+        const char *client_ip = session->client->remote_ip;
+        bool is_allowed = false;
+        
+        for (size_t i = 0; i < lookup->ip_whitelist.length; i++) {
+            const char *ip_w = lookup->ip_whitelist.data[i];
+            if (strcmp(client_ip, ip_w) == 0) {
+                is_allowed = true;
+                break;
+            }
+        }
+        
+        if (!is_allowed) {
+            logger(LOG_DEBUG, "session_process_request()", "client ip %s is not whitelisted", client_ip);
+            res = xps_http_res_create(session->core, HTTP_FORBIDDEN);
+            xps_buffer_t *http_res_buff = xps_http_res_serialize(res);
+            set_to_client_buff(session, http_res_buff);
+            xps_http_res_destroy(res);
+            return;
+        }
+    }
+
+    // 2. Check Blacklist
+    if (lookup->ip_blacklist.length > 0) {
+        const char *client_ip = session->client->remote_ip;
+        
+        for (size_t i = 0; i < lookup->ip_blacklist.length; i++) {
+            const char *ip_b = lookup->ip_blacklist.data[i];
+            if (strcmp(client_ip, ip_b) == 0) {
+                logger(LOG_DEBUG, "session_process_request()", "client ip %s is blacklisted", client_ip);
+                res = xps_http_res_create(session->core, HTTP_FORBIDDEN);
+                xps_buffer_t *http_res_buff = xps_http_res_serialize(res);
+                set_to_client_buff(session, http_res_buff);
+                xps_http_res_destroy(res);
+                return;
+            }
+        }
+    }
+
     if (lookup->type == REQ_FILE_SERVE) {
         if (lookup->file_path) {
             int error;

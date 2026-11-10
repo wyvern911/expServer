@@ -211,6 +211,8 @@ int parse_route(JSON_Object *route_object, xps_config_route_t *route) {
   memset(route, 0, sizeof(xps_config_route_t));
   vec_init(&route->index);
   vec_init(&route->upstreams);
+  vec_init(&route->ip_whitelist);
+  vec_init(&route->ip_blacklist);
 
   route->req_path = json_object_get_string(route_object, "req_path");
   route->type = json_object_get_string(route_object, "type");
@@ -257,6 +259,39 @@ int parse_route(JSON_Object *route_object, xps_config_route_t *route) {
       return E_FAIL;
     }
   }
+
+  JSON_Array *ip_whitelist = json_object_get_array(route_object, "ip_whitelist");
+    JSON_Array *ip_blacklist = json_object_get_array(route_object, "ip_blacklist");
+
+    if (ip_whitelist && !ip_blacklist) {
+        for (size_t i = 0; i < json_array_get_count(ip_whitelist); i++) {
+            const char *ip = json_array_get_string(ip_whitelist, i);
+            if (ip != NULL) vec_push(&(route->ip_whitelist), (void *)ip);
+        }
+    } else if (ip_blacklist && !ip_whitelist) {
+        for (size_t i = 0; i < json_array_get_count(ip_blacklist); i++) {
+            const char *ip = json_array_get_string(ip_blacklist, i);
+            if (ip != NULL) vec_push(&(route->ip_blacklist), (void *)ip);
+        }
+    } else if (ip_whitelist && ip_blacklist) {
+        // Whitelist takes priority: Filter out any IPs that are also on the blacklist
+        for (size_t i = 0; i < json_array_get_count(ip_whitelist); i++) {
+            const char *ip_w = json_array_get_string(ip_whitelist, i);
+            if (ip_w == NULL) continue;
+            
+            bool is_blacklisted = false;
+            for (size_t j = 0; j < json_array_get_count(ip_blacklist); j++) {
+                const char *ip_b = json_array_get_string(ip_blacklist, j);
+                if (ip_b != NULL && strcmp(ip_w, ip_b) == 0) {
+                    is_blacklisted = true;
+                    break;
+                }
+            }
+            if (!is_blacklisted) {
+                vec_push(&(route->ip_whitelist), (void *)ip_w);
+            }
+        }
+    }
 
   return OK;
 }
@@ -407,6 +442,15 @@ xps_config_lookup_t *xps_config_lookup(xps_config_t *config, xps_http_req_t *htt
   } else if (strcmp(route->type, "metrics") == 0) {
     lookup->type = REQ_METRICS;
   }
+
+  // Transfer Whitelist
+    for (int i = 0; i < route->ip_whitelist.length; i++) {
+        vec_push(&lookup->ip_whitelist, route->ip_whitelist.data[i]);
+    }
+    // Transfer Blacklist
+    for (int i = 0; i < route->ip_blacklist.length; i++) {
+        vec_push(&lookup->ip_blacklist, route->ip_blacklist.data[i]);
+    }
 
   // File serve
   if (lookup->type == REQ_FILE_SERVE) {
