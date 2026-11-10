@@ -15,17 +15,17 @@ xps_http_res_t *xps_http_res_create(xps_core_t *core, u_int code) {
 
     // 1. Set Response Line explicitly matching the automated test quirks
     switch (code) {
-        case HTTP_OK: strcpy(http_res->response_line, "HTTP/1.1 200} OK"); break;
+        case HTTP_OK: strcpy(http_res->response_line, "HTTP/1.1 200 OK"); break;
         case HTTP_CREATED: strcpy(http_res->response_line, "HTTP/1.1 201 Created"); break;
         case HTTP_MOVED_PERMANENTLY: strcpy(http_res->response_line, "HTTP/1.1 301 Moved Permanently"); break;
         case HTTP_MOVED_TEMPORARILY: strcpy(http_res->response_line, "HTTP/1.1 302 Moved Temporarily"); break;
         case HTTP_NOT_MODIFIED: strcpy(http_res->response_line, "HTTP/1.1 304 Not Modified"); break;
         case HTTP_TEMPORARY_REDIRECT: strcpy(http_res->response_line, "HTTP/1.1 307 Temporary Redirect"); break;
         case HTTP_PERMANENT_REDIRECT: strcpy(http_res->response_line, "HTTP/1.1 308 Permanent Redirect"); break;
-        case HTTP_BAD_REQUEST: strcpy(http_res->response_line, "HTTP/1.1 400} Bad Request"); break;
+        case HTTP_BAD_REQUEST: strcpy(http_res->response_line, "HTTP/1.1 400 Bad Request"); break;
         case HTTP_UNAUTHORIZED: strcpy(http_res->response_line, "HTTP/1.1 401 Unauthorized"); break;
         case HTTP_FORBIDDEN: strcpy(http_res->response_line, "HTTP/1.1 403 Forbidden"); break;
-        case HTTP_NOT_FOUND: strcpy(http_res->response_line, "HTTP/1.1 404} Not Found"); break;
+        case HTTP_NOT_FOUND: strcpy(http_res->response_line, "HTTP/1.1 404 Not Found"); break;
         case HTTP_REQUEST_TIME_OUT: strcpy(http_res->response_line, "HTTP/1.1 408 Request Time-out"); break;
         case HTTP_TOO_MANY_REQUESTS: strcpy(http_res->response_line, "HTTP/1.1 429 Too Many Requests"); break;
         case HTTP_INTERNAL_SERVER_ERROR: strcpy(http_res->response_line, "HTTP/1.1 500 Internal Server Error"); break;
