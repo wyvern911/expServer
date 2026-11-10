@@ -1,6 +1,7 @@
 #include "xps_session.h"
 
 // Forward declarations of handler functions
+void session_process_request(xps_session_t *session);
 void client_source_handler(void *ptr);
 void client_source_close_handler(void *ptr);
 void client_sink_handler(void *ptr);
@@ -50,6 +51,9 @@ xps_session_t *xps_session_create(xps_core_t *core, xps_connection_t *client) {
   session->core = core;
   session->client = client;
   session->upstream = NULL;
+
+  session->http_req = NULL;
+  session->lookup = NULL;
   
   session->upstream_connected = false;
   session->upstream_error_res_set = false;
@@ -80,33 +84,187 @@ xps_session_t *xps_session_create(xps_core_t *core, xps_connection_t *client) {
 
   logger(LOG_DEBUG, "xps_session_create()", "created session");
 
-  // If listener port is 8001, create an upstream module and then creates a pipe 
-  // between session->upstream_source and upstream->sink as well as between upstream->source and session->upstream_sink
-  if (client->listener->port == 8001) {
-    xps_connection_t *upstream = xps_upstream_create(core, "127.0.0.1", 3000);
-    if (upstream == NULL) {
-      logger(LOG_ERROR, "xps_session_create()", "xps_upstream_create() failed");
-      xps_session_destroy(session);
-      return NULL;
-    }
-    session->upstream = upstream;
-    xps_pipe_create(core, DEFAULT_PIPE_BUFF_THRESH, session->upstream_source, upstream->sink);
-    xps_pipe_create(core, DEFAULT_PIPE_BUFF_THRESH, upstream->source, session->upstream_sink);
-  }
-  // If listener port is 8002, create a file module and then creates a pipe between file->source and session->file_sink
-  else if (client->listener->port == 8002) {
-    int error;
-    xps_file_t *file = xps_file_create(core, "../public/sample.txt", &error);
-    if (file == NULL) {
-      logger(LOG_ERROR, "xps_session_create()", "xps_file_create() failed");
-      xps_session_destroy(session);
-      return NULL;
-    }
-    session->file = file;
-    xps_pipe_create(core, DEFAULT_PIPE_BUFF_THRESH, file->source, session->file_sink);
-  }
-  
   return session;
+}
+
+// To process http request
+void session_process_request(xps_session_t *session) {
+    assert(session != NULL);
+    xps_http_res_t *res = NULL;
+
+    // Bad Request
+    if (session->http_req == NULL || session->http_req->path == NULL) {
+        res = xps_http_res_create(session->core, HTTP_BAD_REQUEST);
+        xps_buffer_t *buff = xps_http_res_serialize(res);
+        set_to_client_buff(session, buff);
+        xps_http_res_destroy(res);
+        return;
+    }
+
+    /* config_lookup called */
+    int lookup_error;
+    xps_config_lookup_t *lookup = xps_config_lookup(session->core->config, session->http_req, session->client, &lookup_error);
+    session->lookup = lookup;
+
+    /* handle lookup error with appropriate response (eg: internal_server_error, not found) */
+    if (lookup == NULL) {
+        if (lookup_error == E_NOTFOUND) {
+            res = xps_http_res_create(session->core, HTTP_NOT_FOUND);
+        } else {
+            res = xps_http_res_create(session->core, HTTP_INTERNAL_SERVER_ERROR);
+        }
+        xps_buffer_t *buff = xps_http_res_serialize(res);
+        set_to_client_buff(session, buff);
+        xps_http_res_destroy(res);
+        return;
+    }
+
+    // 1. Check Whitelist
+    if (lookup->ip_whitelist.length > 0) {
+        const char *client_ip = session->client->remote_ip;
+        bool is_allowed = false;
+        
+        for (size_t i = 0; i < lookup->ip_whitelist.length; i++) {
+            const char *ip_w = lookup->ip_whitelist.data[i];
+            if (strcmp(client_ip, ip_w) == 0) {
+                is_allowed = true;
+                break;
+            }
+        }
+        
+        if (!is_allowed) {
+            logger(LOG_DEBUG, "session_process_request()", "client ip %s is not whitelisted", client_ip);
+            res = xps_http_res_create(session->core, HTTP_FORBIDDEN);
+            xps_buffer_t *http_res_buff = xps_http_res_serialize(res);
+            set_to_client_buff(session, http_res_buff);
+            xps_http_res_destroy(res);
+            return;
+        }
+    }
+
+    // 2. Check Blacklist
+    if (lookup->ip_blacklist.length > 0) {
+        const char *client_ip = session->client->remote_ip;
+        
+        for (size_t i = 0; i < lookup->ip_blacklist.length; i++) {
+            const char *ip_b = lookup->ip_blacklist.data[i];
+            if (strcmp(client_ip, ip_b) == 0) {
+                logger(LOG_DEBUG, "session_process_request()", "client ip %s is blacklisted", client_ip);
+                res = xps_http_res_create(session->core, HTTP_FORBIDDEN);
+                xps_buffer_t *http_res_buff = xps_http_res_serialize(res);
+                set_to_client_buff(session, http_res_buff);
+                xps_http_res_destroy(res);
+                return;
+            }
+        }
+    }
+
+    if (lookup->type == REQ_FILE_SERVE) {
+        if (lookup->file_path) {
+            int error;
+            session->file = xps_file_create(session->core, lookup->file_path, &error);
+
+            // File Errors
+            if (session->file == NULL) {
+                if (error == E_PERMISSION) {
+                    res = xps_http_res_create(session->core, HTTP_FORBIDDEN);
+                } else {
+                    res = xps_http_res_create(session->core, HTTP_NOT_FOUND);
+                }
+                xps_buffer_t *buff = xps_http_res_serialize(res);
+                set_to_client_buff(session, buff);
+                xps_http_res_destroy(res);
+                return;
+            }
+
+            // Success (200 OK)
+            res = xps_http_res_create(session->core, HTTP_OK);
+
+            // MIME type fallback (Fix for Tests 1 & 2)
+            const char *mime = session->file->mime_type;
+            if (!mime) {
+                if (strstr(lookup->file_path, ".jpg") || strstr(lookup->file_path, ".jpeg")) mime = "image/jpeg";
+                else if (strstr(lookup->file_path, ".pdf")) mime = "application/pdf";
+                else if (strstr(lookup->file_path, ".txt")) mime = "text/plain";
+            }
+
+            if (mime) {
+                xps_http_set_header(&res->headers, "Content-Type", mime);
+            }
+
+            xps_buffer_t *buff = xps_http_res_serialize(res);
+            set_to_client_buff(session, buff);
+            xps_http_res_destroy(res);
+
+            xps_pipe_create(session->core, DEFAULT_PIPE_BUFF_THRESH, session->file->source, session->file_sink);
+        } else if (lookup->dir_path) {
+            xps_buffer_t *dir_html = xps_directory_browsing(lookup->dir_path, session->http_req->path);
+        
+            // Create the response object
+            xps_http_res_t *res;
+            if (dir_html != NULL) {
+                res = xps_http_res_create(session->core, HTTP_OK);
+                xps_http_set_header(&res->headers, "Content-Type", "text/html");
+                xps_http_res_set_body(res, dir_html);
+            } else {
+                res = xps_http_res_create(session->core, HTTP_INTERNAL_SERVER_ERROR);
+            }
+
+            // Serialize and prep to send
+            xps_buffer_t *http_res_buff = xps_http_res_serialize(res);
+            set_to_client_buff(session, http_res_buff);
+            
+            xps_http_res_destroy(res);
+            return;
+        } else {
+            res = xps_http_res_create(session->core, HTTP_NOT_FOUND);
+            xps_buffer_t *buff = xps_http_res_serialize(res);
+            set_to_client_buff(session, buff);
+            xps_http_res_destroy(res);
+            return;
+        }
+    } else if (lookup->type == REQ_REVERSE_PROXY) {
+        char host[256];
+        u_int port = 0;
+        if (lookup->upstream == NULL || sscanf(lookup->upstream, "%[^:]:%u", host, &port) != 2) {
+            res = xps_http_res_create(session->core, HTTP_BAD_GATEWAY);
+            xps_buffer_t *buff = xps_http_res_serialize(res);
+            set_to_client_buff(session, buff);
+            xps_http_res_destroy(res);
+            return;
+        }
+
+        /* create upstream connection */
+        session->upstream = xps_upstream_create(session->core, host, port);
+
+        /* handle errors */
+        if (session->upstream == NULL) {
+            res = xps_http_res_create(session->core, HTTP_BAD_GATEWAY);
+            xps_buffer_t *buff = xps_http_res_serialize(res);
+            set_to_client_buff(session, buff);
+            xps_http_res_destroy(res);
+            return;
+        }
+
+        /* attach pipes */
+        xps_pipe_create(session->core, DEFAULT_PIPE_BUFF_THRESH, session->upstream_source, session->upstream->sink);
+        xps_pipe_create(session->core, DEFAULT_PIPE_BUFF_THRESH, session->upstream->source, session->upstream_sink);
+    } else if (lookup->type == REQ_REDIRECT) {
+        xps_http_res_t *http_res =
+            xps_http_res_create(session->core, lookup->http_status_code);
+        xps_http_set_header(&http_res->headers, "Location", lookup->redirect_url);
+        /* serialize the response */
+        xps_buffer_t *http_res_buff = xps_http_res_serialize(http_res);
+        set_to_client_buff(session, http_res_buff);
+        /* destroy the response object after use */
+        xps_http_res_destroy(http_res);
+        return;
+    } else {
+        logger(LOG_ERROR, "session_process_request()", "invalid lookup type");
+        /* destroy session */
+        xps_session_destroy(session);
+        return;
+    }
 }
 
 // Used while writing data from session instance to client connection instance
@@ -150,9 +308,48 @@ void client_sink_handler(void *ptr) {
     return;
   }
 
-  // The read data from pipe is then stored into session->from_client_buff.
-  set_from_client_buff(session, buff);
-  xps_pipe_sink_clear(sink, buff->len);
+  // Intercept data and parse it as HTTP
+  if (session->http_req == NULL) { // HTTP request hasn't been parsed yet
+    int error;
+    
+    // Try to create and parse the HTTP request from the buffer
+    xps_http_req_t *http_req = xps_http_req_create(session->core, buff, &error);
+    
+    if (error == E_FAIL) {
+      // Parsing failed (bad syntax). Process to trigger 400 Bad Request.
+      session_process_request(session);
+      xps_buffer_destroy(buff);
+      xps_pipe_sink_clear(sink, read_len);
+      return;
+    }
+    
+    if (error == E_AGAIN) {
+      // Need more data (e.g., partial header received). 
+      // Do not clear pipe, let data accumulate and try again on next Epoll event.
+      xps_buffer_destroy(buff);
+      return;
+    }
+
+    // Parsing Successful
+    session->http_req = http_req;
+    
+    // Serialize http_req into a clean buffer (used for downstream proxy features later)
+    xps_buffer_t *http_req_buff = xps_http_req_serialize(http_req);
+    
+    // Send serialized HTTP buffer toward the proxy route
+    set_from_client_buff(session, http_req_buff);
+    
+    xps_pipe_sink_clear(sink, http_req->header_len);
+    xps_buffer_destroy(buff);
+
+    // Formulate HTTP response and serve file
+    session_process_request(session);
+  } else {
+    // If the HTTP head is already parsed (e.g., this is just body data like a file upload),
+    // act like a normal proxy and pass it straight through.
+    set_from_client_buff(session, buff);
+    xps_pipe_sink_clear(sink, read_len);
+  }
 }
 
 void client_sink_close_handler(void *ptr) {
@@ -222,7 +419,7 @@ void upstream_sink_handler(void *ptr) {
 
   // After successfully reading the data, it is then stored in the session->to_client_buff.
   set_to_client_buff(session, buff);
-  xps_pipe_sink_clear(sink, buff->len);
+  xps_pipe_sink_clear(sink, read_len);
 }
 
 void upstream_sink_close_handler(void *ptr) {
@@ -240,6 +437,11 @@ void upstream_sink_close_handler(void *ptr) {
 void upstream_error_res(xps_session_t *session) {
   assert(session != NULL);
   session->upstream_error_res_set = true;
+
+  xps_http_res_t *http_res = xps_http_res_create(session->core, HTTP_BAD_GATEWAY);
+  xps_buffer_t *http_res_buff = xps_http_res_serialize(http_res);
+  set_to_client_buff(session, http_res_buff);
+  xps_http_res_destroy(http_res);
 }
 
 // Similar to upstream_sink_handler(). Here data is read from file to session and it is stored in session->to_client_buff.
@@ -258,7 +460,7 @@ void file_sink_handler(void *ptr) {
   }
 
   set_to_client_buff(session, buff);
-  xps_pipe_sink_clear(sink, buff->len);
+  xps_pipe_sink_clear(sink, read_len);
 }
 
 void file_sink_close_handler(void *ptr) {
@@ -346,6 +548,16 @@ void xps_session_destroy(xps_session_t *session) {
   if (session->from_client_buff != NULL)
     xps_buffer_destroy(session->from_client_buff);
 
+  // Free the parsed HTTP request memory
+  if (session->http_req != NULL) {
+    xps_http_req_destroy(session->core, session->http_req);
+  }
+
+  // Free the lookup structure
+  if (session->lookup != NULL) {
+    xps_config_lookup_destroy(session->lookup, session->core);
+  }
+  
   // Set the entry for session in core->sessions as NULL.
   for (int i = 0; i < session->core->sessions.length; i++) {
     if (session->core->sessions.data[i] == session) {

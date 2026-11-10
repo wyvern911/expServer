@@ -9,6 +9,8 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <strings.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -16,9 +18,11 @@
 #include <sys/fcntl.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <dirent.h>
 
 // 3rd party libraries
 #include "lib/vec/vec.h" // https://github.com/rxi/vec
+#include "lib/parson/parson.h"
 
 // Constants
 #define DEFAULT_BACKLOG 64
@@ -26,6 +30,7 @@
 #define DEFAULT_BUFFER_SIZE 100000 // 100 KB
 #define DEFAULT_PIPE_BUFF_THRESH 1000000 // 1 MB
 #define DEFAULT_NULLS_THRESH 32
+#define SERVER_NAME "eXpServer"
 
 // Error constants
 #define OK 0            // Success
@@ -57,6 +62,14 @@ struct xps_keyval_s {
     char* val;
 };
 struct xps_session_s;
+struct xps_http_req_s;
+struct xps_http_res_s;
+struct xps_config_s;
+struct xps_config_server_s;
+struct xps_config_listener_s;
+struct xps_config_route_s;
+struct xps_config_lookup_s;
+struct xps_cliargs_s;
 
 // Struct typedefs
 typedef struct xps_core_s xps_core_t;
@@ -71,12 +84,20 @@ typedef struct xps_pipe_sink_s xps_pipe_sink_t;
 typedef struct xps_file_s xps_file_t;
 typedef struct xps_keyval_s xps_keyval_t;
 typedef struct xps_session_s xps_session_t;
-
+typedef struct xps_http_req_s xps_http_req_t;
+typedef struct xps_http_res_s xps_http_res_t;
+typedef struct xps_config_s xps_config_t;
+typedef struct xps_config_server_s xps_config_server_t;
+typedef struct xps_config_listener_s xps_config_listener_t;
+typedef struct xps_config_route_s xps_config_route_t;
+typedef struct xps_config_lookup_s xps_config_lookup_t;
+typedef struct xps_cliargs_s xps_cliargs_t;
 
 // Function typedefs
 typedef void (*xps_handler_t)(void *ptr);
 
 // xps headers
+#include "config/xps_config.h"
 #include "core/xps_core.h"
 #include "core/xps_loop.h"
 #include "core/xps_pipe.h"
@@ -84,10 +105,15 @@ typedef void (*xps_handler_t)(void *ptr);
 #include "network/xps_connection.h"
 #include "network/xps_listener.h"
 #include "network/xps_upstream.h"
+#include "utils/xps_cliargs.h"
 #include "utils/xps_logger.h"
 #include "utils/xps_utils.h"
 #include "utils/xps_buffer.h"
 #include "disk/xps_file.h"
 #include "disk/xps_mime.h"
+#include "http/xps_http.h"
+#include "http/xps_http_req.h"
+#include "http/xps_http_res.h"
+#include "dir/xps_directory.h"
 
 #endif

@@ -1,6 +1,7 @@
 #include "xps_core.h"
 
-xps_core_t *xps_core_create() {
+xps_core_t *xps_core_create(xps_config_t *config) {
+  assert(config != NULL);
 
   xps_core_t *core = malloc(sizeof(xps_core_t));
   if (core==NULL) {
@@ -17,6 +18,7 @@ xps_core_t *xps_core_create() {
 
   // Init values
   core->loop = loop;
+  core->config = config;
   vec_init(&(core->listeners));
   vec_init(&(core->connections));
   vec_init(&(core->pipes));
@@ -91,14 +93,6 @@ void xps_core_start(xps_core_t *core) {
 
   logger(LOG_DEBUG, "xps_start()", "starting core");
 
-  // Create listeners from port 8001 to 8004
-  for (int i=8001; i<=8004; i++) {
-    xps_listener_t* listener=xps_listener_create(core, "0.0.0.0", i);
-    if (listener==NULL) {
-        logger(LOG_ERROR, "xps_core_start()", "failed to create listener on port %d", i);
-    }
-  }
- 
   // Run loop instance using xps_loop_run()
   xps_loop_run(core->loop);
 }
