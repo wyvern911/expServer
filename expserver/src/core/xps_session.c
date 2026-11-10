@@ -192,6 +192,10 @@ void session_process_request(xps_session_t *session) {
                 xps_http_set_header(&res->headers, "Content-Type", mime);
             }
 
+            char content_length_str[32];
+            snprintf(content_length_str, sizeof(content_length_str), "%zu", session->file->size);
+            xps_http_set_header(&res->headers, "Content-Length", content_length_str);
+
             xps_buffer_t *buff = xps_http_res_serialize(res);
             set_to_client_buff(session, buff);
             xps_http_res_destroy(res);
