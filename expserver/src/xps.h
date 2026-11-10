@@ -18,6 +18,7 @@
 #include <sys/fcntl.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <dirent.h>
 
 // 3rd party libraries
 #include "lib/vec/vec.h" // https://github.com/rxi/vec
@@ -113,5 +114,6 @@ typedef void (*xps_handler_t)(void *ptr);
 #include "http/xps_http.h"
 #include "http/xps_http_req.h"
 #include "http/xps_http_res.h"
+#include "dir/xps_directory.h"
 
 #endif

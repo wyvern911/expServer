@@ -124,12 +124,11 @@ void session_process_request(xps_session_t *session) {
             int error;
             session->file = xps_file_create(session->core, lookup->file_path, &error);
 
-            // File Errors (Fix for Test 4)
+            // File Errors
             if (session->file == NULL) {
                 if (error == E_PERMISSION) {
                     res = xps_http_res_create(session->core, HTTP_FORBIDDEN);
                 } else {
-                    // Default to NOT_FOUND for any other error to satisfy Test 4
                     res = xps_http_res_create(session->core, HTTP_NOT_FOUND);
                 }
                 xps_buffer_t *buff = xps_http_res_serialize(res);
@@ -158,6 +157,25 @@ void session_process_request(xps_session_t *session) {
             xps_http_res_destroy(res);
 
             xps_pipe_create(session->core, DEFAULT_PIPE_BUFF_THRESH, session->file->source, session->file_sink);
+        } else if (lookup->dir_path) {
+            xps_buffer_t *dir_html = xps_directory_browsing(lookup->dir_path, session->http_req->path);
+        
+            // Create the response object
+            xps_http_res_t *res;
+            if (dir_html != NULL) {
+                res = xps_http_res_create(session->core, HTTP_OK);
+                xps_http_set_header(&res->headers, "Content-Type", "text/html");
+                xps_http_res_set_body(res, dir_html);
+            } else {
+                res = xps_http_res_create(session->core, HTTP_INTERNAL_SERVER_ERROR);
+            }
+
+            // Serialize and prep to send
+            xps_buffer_t *http_res_buff = xps_http_res_serialize(res);
+            set_to_client_buff(session, http_res_buff);
+            
+            xps_http_res_destroy(res);
+            return;
         } else {
             res = xps_http_res_create(session->core, HTTP_NOT_FOUND);
             xps_buffer_t *buff = xps_http_res_serialize(res);
