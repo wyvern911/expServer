@@ -37,8 +37,19 @@ xps_http_res_t *xps_http_res_create(xps_core_t *core, u_int code) {
         default: strcpy(http_res->response_line, "HTTP/1.1 500 Internal Server Error"); break;
     }
 
-    // 2. Set Only the Server Header (Tests reject dynamic Date/Access-Control headers)
+    // Get the current time
+    time_t now = time(NULL);
+    // Convert it to GMT (NOT localtime)
+    struct tm *tm_info = gmtime(&now);
+    // Format it to the strict HTTP date standard (RFC 7231)
+    char time_buf[64];
+    strftime(time_buf, sizeof(time_buf), "%a, %d %b %Y %H:%M:%S GMT", tm_info);
+
+    // Set Only the Server Header (Tests reject dynamic Date/Access-Control headers)
     xps_http_set_header(&http_res->headers, "Server", SERVER_NAME);
+    xps_http_set_header(&(http_res->headers), "Date", time_buf);
+    xps_http_set_header(&(http_res->headers), "Server", SERVER_NAME);
+    xps_http_set_header(&(http_res->headers), "Access-Control-Allow-Origin", "*");
 
     return http_res;
 }

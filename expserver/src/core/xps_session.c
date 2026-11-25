@@ -209,6 +209,11 @@ void session_process_request(xps_session_t *session) {
             if (dir_html != NULL) {
                 res = xps_http_res_create(session->core, HTTP_OK);
                 xps_http_set_header(&res->headers, "Content-Type", "text/html");
+
+                char dir_length_str[32];
+                snprintf(dir_length_str, sizeof(dir_length_str), "%zu", dir_html->len);
+                xps_http_set_header(&res->headers, "Content-Length", dir_length_str);
+                
                 xps_http_res_set_body(res, dir_html);
             } else {
                 res = xps_http_res_create(session->core, HTTP_INTERNAL_SERVER_ERROR);
