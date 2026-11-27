@@ -20,6 +20,7 @@ struct xps_session_s {
   xps_buffer_t *from_client_buff;
   xps_http_req_t *http_req;
   xps_config_lookup_t *lookup;
+  xps_gzip_t *gzip;
 };
 
 xps_session_t *xps_session_create(xps_core_t *core, xps_connection_t *client);

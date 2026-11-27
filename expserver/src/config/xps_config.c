@@ -1,5 +1,17 @@
 #include "xps_config.h"
 
+const char *default_gzip_mimes[] = {
+  "text/html",
+  "text/css",
+  "text/plain",
+  "text/javascript",
+  "application/javascript",
+  "application/json",
+  "application/xml",
+  "image/svg+xml"
+};
+const size_t n_default_gzip_mimes = sizeof(default_gzip_mimes) / sizeof(default_gzip_mimes[0]);
+
 // Forward declarations for helper parsing functions
 int parse_server(JSON_Object *server_object, xps_config_server_t *server);
 int parse_listener(JSON_Object *listener_object, xps_config_listener_t *listener);
@@ -102,6 +114,9 @@ void xps_config_destroy(xps_config_t *config) {
       if (route != NULL) {
         vec_deinit(&route->index);
         vec_deinit(&route->upstreams);
+        vec_deinit(&route->ip_blacklist);
+        vec_deinit(&route->ip_whitelist);
+        vec_deinit(&route->gzip_mime_types);
         free(route);
       }
     }
@@ -213,6 +228,29 @@ int parse_route(JSON_Object *route_object, xps_config_route_t *route) {
   vec_init(&route->upstreams);
   vec_init(&route->ip_whitelist);
   vec_init(&route->ip_blacklist);
+
+  vec_init(&route->gzip_mime_types);
+
+  route->gzip_enable = (json_object_get_boolean(route_object, "gzip_enable") == 1);
+  route->gzip_level = -1; // zlib default
+  if (json_object_has_value(route_object, "gzip_level")) {
+    int level = (int)json_object_get_number(route_object, "gzip_level");
+    if (level < -1 || level > 9) {
+      logger(LOG_ERROR, "parse_route()", "invalid gzip_level %d", level);
+      return E_FAIL;
+    }
+    route->gzip_level = level;
+  }
+
+  JSON_Array *gzip_mimes = json_object_get_array(route_object, "gzip_mime_types");
+  if (gzip_mimes != NULL) {
+    for (size_t i = 0; i < json_array_get_count(gzip_mimes); i++) {
+      const char *mime = json_array_get_string(gzip_mimes, i);
+      if (mime != NULL) {
+        vec_push(&route->gzip_mime_types, (void *)mime);
+      }
+    }
+  }
 
   route->req_path = json_object_get_string(route_object, "req_path");
   route->type = json_object_get_string(route_object, "type");
@@ -432,6 +470,9 @@ xps_config_lookup_t *xps_config_lookup(xps_config_t *config, xps_http_req_t *htt
   lookup->redirect_url = NULL;
   vec_init(&lookup->ip_whitelist);
   vec_init(&lookup->ip_blacklist);
+  lookup->gzip_enable = false;
+  lookup->gzip_level = route->gzip_level;
+  vec_init(&lookup->gzip_mime_types);
 
   if (strcmp(route->type, "file_serve") == 0) {
     lookup->type = REQ_FILE_SERVE;
@@ -444,13 +485,17 @@ xps_config_lookup_t *xps_config_lookup(xps_config_t *config, xps_http_req_t *htt
   }
 
   // Transfer Whitelist
-    for (int i = 0; i < route->ip_whitelist.length; i++) {
-        vec_push(&lookup->ip_whitelist, route->ip_whitelist.data[i]);
-    }
-    // Transfer Blacklist
-    for (int i = 0; i < route->ip_blacklist.length; i++) {
-        vec_push(&lookup->ip_blacklist, route->ip_blacklist.data[i]);
-    }
+  for (int i = 0; i < route->ip_whitelist.length; i++) {
+      vec_push(&lookup->ip_whitelist, route->ip_whitelist.data[i]);
+  }
+  // Transfer Blacklist
+  for (int i = 0; i < route->ip_blacklist.length; i++) {
+      vec_push(&lookup->ip_blacklist, route->ip_blacklist.data[i]);
+  }
+  // Transfer Gzip MIME types
+  for (int i = 0; i < route->gzip_mime_types.length; i++) {
+    vec_push(&lookup->gzip_mime_types, route->gzip_mime_types.data[i]);
+  }
 
   // File serve
   if (lookup->type == REQ_FILE_SERVE) {
@@ -519,6 +564,32 @@ xps_config_lookup_t *xps_config_lookup(xps_config_t *config, xps_http_req_t *htt
       free(resource_path);
     }
 
+    // Check gzip eligibility for the resolved file
+    if (lookup->file_path != NULL && route->gzip_enable) {
+      const char *mime = xps_get_mime(lookup->file_path);
+      if (mime != NULL) {
+        bool mime_eligible = false;
+
+        for (size_t i = 0; i < n_default_gzip_mimes; i++) {
+          if (strcmp(mime, default_gzip_mimes[i]) == 0) {
+            mime_eligible = true;
+            break;
+          }
+        }
+
+        if (!mime_eligible) {
+          for (int i = 0; i < route->gzip_mime_types.length; i++) {
+            if (strcmp(mime, route->gzip_mime_types.data[i]) == 0) {
+              mime_eligible = true;
+              break;
+            }
+          }
+        }
+
+        lookup->gzip_enable = mime_eligible;
+      }
+    }
+
     *error = OK;
     return lookup;
   } else if (lookup->type == REQ_REVERSE_PROXY) {
@@ -551,6 +622,7 @@ void xps_config_lookup_destroy(xps_config_lookup_t *config_lookup, xps_core_t *c
 
   vec_deinit(&config_lookup->ip_whitelist);
   vec_deinit(&config_lookup->ip_blacklist);
+  vec_deinit(&config_lookup->gzip_mime_types);
 
   free(config_lookup);
 }

@@ -5,15 +5,24 @@ xps_keyval_t mime_types[] = {
     {".c", "text/x-c"},
     {".cc", "text/x-c"},
     {".cpp", "text/x-c"},
+    {".html", "text/html"},
+    {".htm", "text/html"},
+    {".css", "text/css"},
+    {".js", "application/javascript"},
+    {".json", "application/json"},
+    {".xml", "application/xml"},
+    {".svg", "image/svg+xml"},
+    {".text", "text/plain"},
+    {".txt", "text/plain"},
+    {".png", "image/png"},
+    {".jpg", "image/jpeg"},
+    {".jpeg", "image/jpeg"},
+    {".pdf", "application/pdf"},
     {".dir", "application/x-director"},
     {".dxr", "application/x-director"},
     {".fgd", "application/x-director"},
     {".swa", "application/x-director"},
-    {".text", "text/plain"},
-    {".txt", "text/plain"},
-    {".png", "image/png"},
-    {".png", "image/x-png"},
-    };
+};
 int n_mimes = sizeof(mime_types) / sizeof(mime_types[0]);
 
 const char *xps_get_mime(const char *file_path) {

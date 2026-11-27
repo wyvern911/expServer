@@ -54,6 +54,7 @@ xps_session_t *xps_session_create(xps_core_t *core, xps_connection_t *client) {
 
   session->http_req = NULL;
   session->lookup = NULL;
+  session->gzip = NULL;
   
   session->upstream_connected = false;
   session->upstream_error_res_set = false;
@@ -180,27 +181,43 @@ void session_process_request(xps_session_t *session) {
             // Success (200 OK)
             res = xps_http_res_create(session->core, HTTP_OK);
 
-            // MIME type fallback (Fix for Tests 1 & 2)
-            const char *mime = session->file->mime_type;
-            if (!mime) {
-                if (strstr(lookup->file_path, ".jpg") || strstr(lookup->file_path, ".jpeg")) mime = "image/jpeg";
-                else if (strstr(lookup->file_path, ".pdf")) mime = "application/pdf";
-                else if (strstr(lookup->file_path, ".txt")) mime = "text/plain";
+            if (session->file->mime_type != NULL) {
+                xps_http_set_header(&res->headers, "Content-Type", session->file->mime_type);
             }
 
-            if (mime) {
-                xps_http_set_header(&res->headers, "Content-Type", mime);
+            // 1. Check client Accept-Encoding + resolved config eligibility
+            const char *accept_encoding = xps_http_get_header(&session->http_req->headers, "Accept-Encoding");
+            bool use_gzip = lookup->gzip_enable && (accept_encoding != NULL && strstr(accept_encoding, "gzip") != NULL);
+
+            // 2. Create gzip instance if eligible (fallback to uncompressed on failure)
+            if (use_gzip) {
+                session->gzip = xps_gzip_create(lookup->gzip_level);
+                if (session->gzip == NULL) {
+                    logger(LOG_ERROR, "session_process_request()", "xps_gzip_create() failed, falling back to uncompressed");
+                    use_gzip = false;
+                }
             }
 
-            char content_length_str[32];
-            snprintf(content_length_str, sizeof(content_length_str), "%zu", session->file->size);
-            xps_http_set_header(&res->headers, "Content-Length", content_length_str);
+            // 3. Set Content-Encoding (omit Content-Length) OR set Content-Length
+            if (use_gzip) {
+                xps_http_set_header(&res->headers, "Content-Encoding", "gzip");
+            } else {
+                char content_length_str[32];
+                snprintf(content_length_str, sizeof(content_length_str), "%zu", session->file->size);
+                xps_http_set_header(&res->headers, "Content-Length", content_length_str);
+            }
 
             xps_buffer_t *buff = xps_http_res_serialize(res);
             set_to_client_buff(session, buff);
             xps_http_res_destroy(res);
 
-            xps_pipe_create(session->core, DEFAULT_PIPE_BUFF_THRESH, session->file->source, session->file_sink);
+            // 4. Wire either the 2-pipe gzip chain or the direct 1-pipe path
+            if (use_gzip) {
+                xps_pipe_create(session->core, DEFAULT_PIPE_BUFF_THRESH, session->file->source, session->gzip->sink);
+                xps_pipe_create(session->core, DEFAULT_PIPE_BUFF_THRESH, session->gzip->source, session->file_sink);
+            } else {
+                xps_pipe_create(session->core, DEFAULT_PIPE_BUFF_THRESH, session->file->source, session->file_sink);
+            }
         } else if (lookup->dir_path) {
             xps_buffer_t *dir_html = xps_directory_browsing(lookup->dir_path, session->http_req->path);
         
